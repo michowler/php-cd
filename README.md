@@ -1,5 +1,5 @@
 A simple way to find nearby places 
-- Integrated Google Maps Platform API (Address Validation, Maps)
+- Integrated Google Maps Platform API (Geocoding, Maps)
 - Added autocomplete for address search
 - Integrated OpenWeather API
 - Added weather data & description
