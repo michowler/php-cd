@@ -1,3 +1,59 @@
+<?php
+// Include external files for configuration and utility functions
+$config = require 'config.php'; // Import config array
+require_once 'utils.php';
+
+// Extract configuration values
+$GOOGLE_API_KEY = $config['GOOGLE_API_KEY'];
+$OPENWEATHER_API_KEY = $config['OPENWEATHER_API_KEY'];
+
+// Initialize variables
+$address = '';
+$formattedAddress = '';
+$latitude = null;
+$longitude = null;
+$temperature_today = "N/A";
+$weatherDesc = "";
+$nearbyPlaces = [];
+$errorMessage = "";
+
+// Handle form submission
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    // Trim and encode address input
+    $address = trim($_POST["address"]);
+
+    if (!validateInput($address)) {
+        $errorMessage = "Invalid input. Please enter a valid address.";
+    } else {
+        try {
+            // Geocoding API
+            $geoData = fetchGeocodeData($address, $GOOGLE_API_KEY);
+
+            if ($geoData["status"] === "OK") {
+                $formattedAddress = $geoData["results"][0]["formatted_address"];
+                $location = $geoData["results"][0]["geometry"]["location"];
+                $latitude = $location["lat"];
+                $longitude = $location["lng"];
+
+                // Weather API
+                $weatherData = fetchWeatherData($latitude, $longitude, $OPENWEATHER_API_KEY);
+                if ($weatherData) {
+                    $temperature_today = getTemperature($weatherData);
+                    $weatherDesc = $weatherData["weather"][0]["description"] ?? "Unavailable";
+                }
+
+                // Nearby Places API
+                $nearbyPlaces = fetchNearbyPlaces($latitude, $longitude, $GOOGLE_API_KEY);
+            } else {
+                $errorMessage = "Unable to find the address. Please try again.";
+            }
+        } catch (Exception $e) {
+            $errorMessage = "An error occurred: " . $e->getMessage();
+        }
+    }
+}
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,7 +64,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <!-- Google Maps JavaScript API -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDegaeRf56G-zlD_SHpbl4omD38ZKuufzw&libraries=places"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=<?php echo $GOOGLE_API_KEY; ?>&libraries=places"></script>
     <style>
         #map {
             height: 400px;
@@ -40,99 +96,49 @@
                     </form>
                 </div>
             </div>
-            <?php
-            if ($_SERVER["REQUEST_METHOD"] === "POST") {
-                // GOOGLE API KEY
-                $googleApiKey = "AIzaSyDegaeRf56G-zlD_SHpbl4omD38ZKuufzw";
-                // OPEN WEATHER API KEY
-                $openWeatherApiKey = "e3cce80cfb2e503b8549feffd23a1f8c";
-                $address = urlencode(trim($_POST["address"]));
 
-                // Geocoding API
-                $geoUrl = "https://maps.googleapis.com/maps/api/geocode/json?address=$address&key=$googleApiKey";
-                $geoResponse = file_get_contents($geoUrl);
-                $geoData = json_decode($geoResponse, true);
+            <?php if ($formattedAddress): ?>
+                <div class="card mt-4 shadow-sm">
+                    <div class="card-body">
+                        <p class='text-success'><strong>Your location:</strong> <?php echo htmlspecialchars($formattedAddress); ?></p>
+                        <p><strong>Current Weather:</strong> <?php echo htmlspecialchars($temperature_today); ?>°C, <?php echo htmlspecialchars($weatherDesc); ?></p>
+                        <div id="map"></div>
+                        <h5 class='mt-4'>Nearby Places:</h5>
+                        <ul>
+                            <?php foreach ($nearbyPlaces as $place): ?>
+                                <li><?php echo htmlspecialchars($place); ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </div>
+                </div>
 
-                echo '<div class="card mt-4 shadow-sm">';
-                echo '<div class="card-body">';
-                if ($geoData["status"] === "OK") {
-                    $formattedAddress = $geoData["results"][0]["formatted_address"];
-                    $location = $geoData["results"][0]["geometry"]["location"];
-                    $latitude = $location["lat"];
-                    $longitude = $location["lng"];
-
-                    echo "<p class='text-success'><strong>Your location:</strong> $formattedAddress</p>";
-
-                    // Weather API
-                    $weatherUrl = "https://api.openweathermap.org/data/2.5/weather?lat=$latitude&lon=$longitude&units=metric&appid=$openWeatherApiKey";
-                    $weatherResponse = file_get_contents($weatherUrl);
-                    $weatherData = json_decode($weatherResponse, true);
-                    $temperature_today = "N/A"; // Default value to avoid undefined variable warning
-
-                    // Check Weather Data
-                    if ($weatherData){
-                        // Check Weather Temperature
-                        if (isset($weatherData["main"]["temp"])) {
-                            $temperature_today = number_format((float)$weatherData["main"]["temp"], 2, '.', '');
-                            
-                        } elseif (isset($weatherData["main"]["temp_max"], $weatherData["main"]["temp_min"])) {
-                            $temperature_today = number_format((float)(($weatherData["main"]["temp_max"] + $weatherData["main"]["temp_min"]) / 2), 2, '.', '');
-                            
-                        }
-                        // Check Weather Description
-                        $weatherDesc = $weatherData["weather"][0]["description"];
-                        echo "<p><strong>Current Weather:</strong> $temperature_today°C, $weatherDesc</p>";
+                <script>
+                    function initMap() {
+                        var location = { lat: <?php echo $latitude; ?>, lng: <?php echo $longitude; ?> };
+                        var map = new google.maps.Map(document.getElementById('map'), {
+                            zoom: 15,
+                            center: location
+                        });
+                        var marker = new google.maps.Marker({
+                            position: location,
+                            map: map
+                        });
                     }
-                    else {
-                        echo "<p class='text-warning'>Weather data is currently unavailable.</p>";
-                    }
-                    
-                    // Map Section
-                    echo '<div id="map"></div>';
-
-                    // Nearby Places API
-                    $placesUrl = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=$latitude,$longitude&radius=1500&type=restaurant&key=$googleApiKey";
-                    $placesResponse = file_get_contents($placesUrl);
-                    $placesData = json_decode($placesResponse, true);
-                    // Handling response OK
-                    if ($placesData["status"] === "OK") {
-                        echo "<h5 class='mt-4'>Nearby Places:</h5><ul>";
-                        foreach ($placesData["results"] as $place) {
-                            echo "<li>" . htmlspecialchars($place["name"]) . "</li>";
-                        }
-                        echo "</ul>";
-                    }
-
-                    echo "
-                    <script>
-                        function initMap() {
-                            var location = { lat: $latitude, lng: $longitude };
-                            var map = new google.maps.Map(document.getElementById('map'), {
-                                zoom: 15,
-                                center: location
-                            });
-                            var marker = new google.maps.Marker({
-                                position: location,
-                                map: map
-                            });
-                        }
-                        initMap();
-                    </script>";
-                }
-                // Handling response NULL 
-                else {
-                    echo "<p class='text-danger'><strong>Invalid address.</strong> Please try again.</p>";
-                }
-                echo '</div>';
-                echo '</div>';
-            }
-            ?>
+                    initMap();
+                </script>
+            <?php elseif ($errorMessage): ?>
+                <div class="card mt-4 shadow-sm">
+                    <div class="card-body text-danger">
+                        <?php echo htmlspecialchars($errorMessage); ?>
+                    </div>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
 
 <script>
-    // Address Autocomplete Initialization
+    // Address Autocomplete Initialisation
     let autocomplete;
     function initAutocomplete() {
         const addressInput = document.getElementById('address');
@@ -158,3 +164,4 @@
 
 </body>
 </html>
+
